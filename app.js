@@ -370,7 +370,7 @@ function updateMap() {
   }
   tmap.show(pts, S.tab === "plan").catch(() => {});
   const missing = total - pts.length;
-  $("#mapinfo").textContent = (pts.length ? "地圖上 " + pts.length + " 個地點" : "這裡還沒有已定位的地點") + (missing > 0 ? "，" + missing + " 個未定位" : "");
+  $("#mapinfo").innerHTML = esc(pts.length ? "地圖上 " + pts.length + " 個地點" : "這裡還沒有已定位的地點") + (missing > 0 ? "，" + missing + ' 個未定位 <button class="linkbtn" data-act="geo-missing">自動定位</button>' : "");
 }
 document.addEventListener("maps-auth-failed", () => { S.mapErr = "Google 地圖金鑰無效，或沒有允許這個網址使用。請檢查金鑰的網站限制。"; if (S.screen === "trip") updateMap(); });
 
@@ -692,13 +692,41 @@ function previewSheet(data) {
     }, null, { saveLabel: "確認匯入", noFocus: true });
 }
 
+// 地址或已含行政區的文字不加目的地；找不到時改用原文、再不加位置偏好重試
 async function geocode(text, dest, token) {
-  const q = dest && !text.includes(dest) ? text + " " + dest : text;
+  const isAddr = /[縣市區鄉鎮村里路街巷弄號]|\d/.test(text);
   const center = (() => { const p = [...S.stops, ...S.wishes].filter(hasPos); if (!p.length) return null; return { lat: p.reduce((a, b) => a + b.lat, 0) / p.length, lng: p.reduce((a, b) => a + b.lng, 0) / p.length }; })();
-  const list = await suggest(q, token, center);
-  if (!list.length) return null;
-  const p = await resolvePlace(list[0].pred);
-  return { lat: p.lat, lng: p.lng, placeId: p.placeId, place: p.name + (p.address ? "（" + p.address + "）" : "") };
+  const tries = [];
+  if (dest && !isAddr && !text.includes(dest)) tries.push([text + " " + dest, center]);
+  tries.push([text, isAddr ? null : center]);
+  tries.push([text, null]);
+  for (const [q, c] of tries) {
+    const list = await suggest(q, token, c);
+    if (list.length) {
+      const p = await resolvePlace(list[0].pred);
+      return { lat: p.lat, lng: p.lng, placeId: p.placeId, place: p.name + (p.address ? "（" + p.address + "）" : "") };
+    }
+  }
+  return null;
+}
+
+// 地圖下方「自動定位」：把目前畫面上還沒定位的地點補上座標
+async function geoMissing() {
+  const isPlan = S.tab === "plan";
+  const items = (isPlan ? dayStops() : wishList()).filter(x => !hasPos(x) && (x.place || x.title || x.name));
+  if (!items.length) return;
+  const dest = (S.trip && S.trip.destination) || "", col = isPlan ? "stops" : "wishes";
+  let ok = 0; const cache = new Map();
+  toast("定位中…");
+  for (const x of items) {
+    const text = x.place || x.title || x.name;
+    try {
+      let g = cache.get(text);
+      if (g === undefined) { g = await geocode(text, dest, await newSession()); cache.set(text, g); }
+      if (g) { await S.store.update(S.key, col, x.id, { lat: g.lat, lng: g.lng, placeId: g.placeId }); ok++; }
+    } catch (e) { console.warn("geocode", text, e); }
+  }
+  toast(ok === items.length ? "已定位 " + ok + " 個地點" : "定位 " + ok + " 個；" + (items.length - ok) + " 個找不到，請點「編輯」從搜尋清單選。");
 }
 
 async function runImport(data, replace, geo, progress) {
@@ -771,6 +799,7 @@ document.addEventListener("click", async ev => {
       navigator.geolocation.getCurrentPosition(p => tmap && tmap.showMe({ lat: p.coords.latitude, lng: p.coords.longitude }), () => toast("無法取得位置，請允許瀏覽器使用定位。"), { enableHighAccuracy: true, timeout: 10000 });
       break;
     case "fit": tmap && tmap.show(mapPoints(), S.tab === "plan", true); break;
+    case "geo-missing": el.disabled = true; once("geo", geoMissing); break;
     case "stop-new": stopForm(null); break;
     case "stop-edit": { const x = find(S.stops); if (x) stopForm(x); break; }
     case "wishkind": S.wishKind = id; render(); break;
