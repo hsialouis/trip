@@ -15,5 +15,5 @@ export const CONFIG = {
   },
 
   // Google 地圖 API 金鑰（需啟用 Maps JavaScript API 與 Places API (New)）
-  mapsKey: ""
+  mapsKey: "AIzaSyB1v7o9jcZo4U5_ngxE6cx_TPHnqwszF_0"
 };
