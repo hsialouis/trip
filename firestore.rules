@@ -1,0 +1,19 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 每趟旅行的文件 ID 由「旅行代碼＋密碼」雜湊而成，不知道密碼就找不到。
+    // 禁止列出所有旅行（list），只能用正確的 ID 直接讀取（get）。
+    match /trips/{tripKey} {
+      allow get, create, update, delete: if request.auth != null && tripKey.size() == 64;
+      allow list: if false;
+
+      match /{sub}/{docId} {
+        allow read, write: if request.auth != null
+          && sub in ['stops', 'wishes', 'expenses', 'tasks'];
+      }
+    }
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
