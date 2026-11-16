@@ -1,5 +1,5 @@
 // Google 地圖：互動地圖（自訂編號標記）與地點搜尋自動完成（Places API New）
-import { CONFIG } from "./config.js?v=202611161620";
+import { CONFIG } from "./config.js?v=202611161733";
 
 let loading = null;
 export const mapsEnabled = () => !!CONFIG.mapsKey;

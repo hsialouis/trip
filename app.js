@@ -1,9 +1,11 @@
-import { createStore, COLS } from "./store.js?v=202611161620";
-import { TripMap, mapsEnabled, newSession, suggest, resolvePlace } from "./map.js?v=202611161620";
-import { DEMO } from "./demo.js?v=202611161620";
-import { aiEnabled, generateJSON, aiErrorMessage } from "./ai.js?v=202611161620";
+import { createStore, COLS } from "./store.js?v=202611161733";
+import { TripMap, mapsEnabled, newSession, suggest, resolvePlace } from "./map.js?v=202611161733";
+import { DEMO } from "./demo.js?v=202611161733";
+import { aiEnabled, generateJSON, aiErrorMessage } from "./ai.js?v=202611161733";
 
-const TABS = [["plan", "行程"], ["food", "必吃必買"], ["money", "分帳"], ["prep", "行前清單"]];
+const TABS = [["plan", "行程"], ["food", "候選清單"], ["money", "分帳"], ["prep", "行前清單"]];
+const KINDS = [["play", "景點", "var(--accent)", "去過了"], ["eat", "美食", "var(--warn)", "吃過了"], ["buy", "購物", "var(--buy)", "買到了"], ["stay", "住宿", "var(--good)", "已訂"]];
+const kindOf = k => KINDS.find(x => x[0] === k) || KINDS[1];
 const MODES = ["步行", "地鐵／電車", "公車", "計程車", "開車", "高鐵／火車", "飛機", "船", "其他"];
 const TASKCATS = ["預訂", "證件", "打包", "其他"];
 const EXPCATS = ["交通", "住宿", "餐飲", "門票", "購物", "其他"];
@@ -33,7 +35,7 @@ function applyTheme(name) {
 
 const S = {
   store: null, fatal: "", trip: null, key: null, stops: [], wishes: [], expenses: [], tasks: [],
-  day: null, wishKind: "eat", tab: "plan", screen: "loading", joinCode: "", mapErr: ""
+  day: null, wishKind: "play", tab: "plan", screen: "loading", joinCode: "", mapErr: ""
 };
 let subs = [];
 let sheetState = null;
@@ -171,7 +173,7 @@ function dayStops() {
     .sort((a, b) => (a.time || "99").localeCompare(b.time || "99") || (a.createdAt || 0) - (b.createdAt || 0));
 }
 function wishList() {
-  return S.wishes.filter(w => (w.kind || "eat") === S.wishKind)
+  return S.wishes.filter(w => kindOf(w.kind)[0] === S.wishKind)
     .sort((a, b) => (!!a.done - !!b.done) || ((b.votes || []).length - (a.votes || []).length) || (a.createdAt || 0) - (b.createdAt || 0));
 }
 function settle(t) {
@@ -299,19 +301,25 @@ function viewPlan(t) {
 }
 
 function viewFood() {
-  const m = me(); const list = wishList();
-  let h = '<div class="section-head"><div class="seg" role="group" aria-label="類別"><button data-act="wishkind" data-id="eat" aria-pressed="' + (S.wishKind === "eat") + '">必吃</button><button data-act="wishkind" data-id="buy" aria-pressed="' + (S.wishKind === "buy") + '">必買</button></div><button class="btn primary small" data-act="wish-new">＋ 新增</button></div>';
-  if (!m) h += '<p style="color:var(--muted);font-size:13px;margin:-4px 0 10px">先在上方選「我是」，就能幫想去的項目 +1。</p>';
-  if (!list.length) return h + '<div class="card empty"><p>' + (S.wishKind === "eat" ? "還沒有想吃的店。" : "還沒有想買的東西。") + '</p><button class="btn" data-act="wish-new">新增一個</button></div>';
+  const m = me(); const list = wishList(); const K = kindOf(S.wishKind);
+  const count = k => S.wishes.filter(w => kindOf(w.kind)[0] === k).length;
+  let h = '<div class="section-head"><div class="seg" role="group" aria-label="類別">' +
+    KINDS.map(([k, l]) => '<button data-act="wishkind" data-id="' + k + '" aria-pressed="' + (S.wishKind === k) + '">' + l + ' <span class="num">' + count(k) + "</span></button>").join("") +
+    '</div><button class="btn primary small" data-act="wish-new">＋ 新增</button></div>';
+  h += '<p style="color:var(--muted);font-size:13px;margin:-4px 0 10px">想去的地方先放這裡，大家 +1 投票，決定後按「排進行程」放到某一天。' + (m ? "" : "先在上方選「我是」才能 +1。") + "</p>";
+  if (!list.length) return h + '<div class="card empty"><p>還沒有' + K[1] + '候選。</p><button class="btn" data-act="wish-new">新增一個</button></div>';
   h += '<ul class="rows card">' + list.map((w, i) => {
-    const v = w.votes || []; const mine = m && v.includes(m);
+    const v = w.votes || []; const mine = m && v.includes(m); const k = kindOf(w.kind);
     return '<li class="row' + (w.done ? " done" : "") + '" id="item-' + esc(w.id) + '">' +
       '<button class="vote" data-act="vote" data-id="' + esc(w.id) + '" aria-pressed="' + (!!mine) + '" aria-label="' + (mine ? "取消 +1" : "+1") + "，目前 " + v.length + ' 票"><span class="c num">' + v.length + '</span><span class="l">' + (mine ? "已 +1" : "+1") + "</span></button>" +
-      '<div class="main"><div class="title">' + (hasPos(w) && mapsEnabled() ? '<span class="num" style="color:var(--' + (w.kind === "buy" ? "buy" : "accent") + ')">' + (i + 1) + ". </span>" : "") + esc(w.name) + "</div>" +
-      '<div class="sub">' + (w.place ? esc(w.place) + "<br>" : "") + (w.note ? esc(w.note) + "<br>" : "") +
-      '<span class="links">' + (hasPos(w) && mapsEnabled() ? '<button class="linkbtn" data-act="focus" data-id="' + esc(w.id) + '">在地圖上看</button>' : "") + ext(gPlace(w), "Google 地圖 ↗") + ext(aPlace(w), "Apple 地圖 ↗") + "</span></div>" +
-      (v.length ? '<div class="voters">' + v.map(x => '<span class="pill">' + esc(x) + "</span>").join("") + "</div>" : "") + "</div>" +
-      '<div class="rowacts"><button class="check" data-act="wish-done" data-id="' + esc(w.id) + '" aria-pressed="' + (!!w.done) + '" aria-label="' + (w.kind === "buy" ? "已買到" : "已吃過") + '" title="' + (w.kind === "buy" ? "已買到" : "已吃過") + '"><svg viewBox="0 0 16 16"><path d="M3 8.5l3 3 7-7"/></svg></button>' +
+      '<div class="main"><div class="title">' + (hasPos(w) && mapsEnabled() ? '<span class="num" style="color:' + k[2] + '">' + (i + 1) + ". </span>" : "") + esc(w.name) +
+      (w.plannedDate ? ' <span class="pill" style="font-weight:500">已排 ' + md(w.plannedDate) + "</span>" : "") + "</div>" +
+      '<div class="sub">' + (w.place && w.place !== w.name ? esc(w.place) + "<br>" : "") + (w.note ? esc(w.note) + "<br>" : "") +
+      '<span class="links">' + (hasPos(w) && mapsEnabled() ? '<button class="linkbtn" data-act="focus" data-id="' + esc(w.id) + '">在地圖上看</button>' : "") + ext(gPlace(w), "Google 地圖 ↗") + ext(aPlace(w), "Apple 地圖 ↗") +
+      (/^https?:\/\//.test(w.url || "") ? ext(w.url, "來源 ↗") : "") + "</span></div>" +
+      (v.length ? '<div class="voters">' + v.map(x => '<span class="pill">' + esc(x) + "</span>").join("") + "</div>" : "") +
+      '<div style="margin-top:8px"><button class="btn small" data-act="wish-plan" data-id="' + esc(w.id) + '">' + (w.plannedDate ? "再排一次" : "排進行程") + "</button></div></div>" +
+      '<div class="rowacts"><button class="check" data-act="wish-done" data-id="' + esc(w.id) + '" aria-pressed="' + (!!w.done) + '" aria-label="' + k[3] + '" title="' + k[3] + '"><svg viewBox="0 0 16 16"><path d="M3 8.5l3 3 7-7"/></svg></button>' +
       '<button class="btn ghost small" data-act="wish-edit" data-id="' + esc(w.id) + '">編輯</button></div></li>';
   }).join("") + "</ul>";
   return h;
@@ -369,7 +377,7 @@ function mapPoints() {
       .map(o => ({ id: o.x.id, lat: o.x.lat, lng: o.x.lng, label: String(o.i + 1), title: o.x.title, color: "var(--accent)" }));
   }
   return wishList().map((w, i) => ({ w, i })).filter(o => hasPos(o.w))
-    .map(o => ({ id: o.w.id, lat: o.w.lat, lng: o.w.lng, label: String(o.i + 1), title: o.w.name, faded: !!o.w.done, color: o.w.kind === "buy" ? "var(--buy)" : "var(--accent)" }));
+    .map(o => ({ id: o.w.id, lat: o.w.lat, lng: o.w.lng, label: String(o.i + 1), title: o.w.name, faded: !!o.w.done, color: kindOf(o.w.kind)[2] }));
 }
 function updateMap() {
   const bar = $("#mapbar"), box = $("#map"), note = $("#mapnote");
@@ -519,7 +527,7 @@ function shareSheet(code, pw) {
 function stopForm(x) {
   const t = S.trip; x = x || { date: S.day || "", time: "" }; const isNew = !x.id;
   const days = tripDays(t).filter(Boolean);
-  openSheet(isNew ? "新增行程" : "編輯行程",
+  openSheet(isNew ? (x.fromWish ? "排進行程" : "新增行程") : "編輯行程",
     '<div class="two">' + field("f_date", "日期", '<select id="f_date" name="f_date"><option value="">未定</option>' + days.map(d => '<option value="' + d + '"' + (d === x.date ? " selected" : "") + ">" + md(d) + "</option>").join("") + "</select>") +
     field("f_time", "時間", inp("f_time", x.time, 'type="time"')) + "</div>" +
     placeField(x, "地點", mapsEnabled() ? "搜尋景點、餐廳或地址" : "店名或地址（用來開地圖）") +
@@ -534,7 +542,10 @@ function stopForm(x) {
         mode: fd.get("f_mode") || "", mins: fd.get("f_mins") ? Number(fd.get("f_mins")) : null, moveNote: fd.get("f_mnote").trim()
       }, placeData(fd));
       let ok;
-      if (isNew) { data.createdAt = Date.now(); data.by = me(); ok = await write(() => S.store.add(S.key, "stops", data)); }
+      if (isNew) {
+        data.createdAt = Date.now(); data.by = me(); ok = await write(() => S.store.add(S.key, "stops", data));
+        if (ok && x.fromWish) await write(() => S.store.update(S.key, "wishes", x.fromWish, { plannedDate: data.date || "未定" }));
+      }
       else ok = await write(() => S.store.update(S.key, "stops", x.id, data));
       if (ok) S.day = data.date;
       return ok;
@@ -543,14 +554,16 @@ function stopForm(x) {
   bindPlace(x);
 }
 function wishForm(w) {
-  w = w || { kind: S.wishKind }; const isNew = !w.id;
-  openSheet(isNew ? (w.kind === "buy" ? "新增必買" : "新增必吃") : "編輯",
-    field("f_kind", "類別", '<select id="f_kind" name="f_kind"><option value="eat"' + (w.kind !== "buy" ? " selected" : "") + '>必吃</option><option value="buy"' + (w.kind === "buy" ? " selected" : "") + ">必買</option></select>") +
-    placeField(w, "在哪裡", mapsEnabled() ? "搜尋店家或地點" : "店家、商圈或地址") +
-    field("f_wname", "名稱", inp("f_wname", w.name, 'required maxlength="80" placeholder="店名或商品"')) +
-    field("f_wnote", "備註", '<textarea id="f_wnote" name="f_wnote" maxlength="600" placeholder="推薦品項、價位、要排隊嗎…">' + esc(w.note || "") + "</textarea>"),
+  w = w || { kind: S.wishKind }; const isNew = !w.id; const k = kindOf(w.kind);
+  openSheet(isNew ? "新增" + k[1] + "候選" : "編輯候選",
+    field("f_kind", "類別", '<select id="f_kind" name="f_kind">' + KINDS.map(([v, l]) => '<option value="' + v + '"' + (k[0] === v ? " selected" : "") + ">" + l + "</option>").join("") + "</select>") +
+    placeField(w, "在哪裡", mapsEnabled() ? "搜尋景點、店家或地址" : "店家、景點或地址") +
+    field("f_wname", "名稱", inp("f_wname", w.name, 'required maxlength="80" placeholder="景點、店名或商品"')) +
+    field("f_wnote", "備註", '<textarea id="f_wnote" name="f_wnote" maxlength="600" placeholder="推薦原因、營業時間、價位…">' + esc(w.note || "") + "</textarea>") +
+    field("f_wurl", "來源連結", inp("f_wurl", w.url, 'type="url" maxlength="500" placeholder="IG、部落格或 Notion 連結（可留空）"')),
     async fd => {
-      const data = Object.assign({ kind: fd.get("f_kind"), name: fd.get("f_wname").trim(), note: fd.get("f_wnote").trim() }, placeData(fd));
+      const url = String(fd.get("f_wurl") || "").trim();
+      const data = Object.assign({ kind: fd.get("f_kind"), name: fd.get("f_wname").trim(), note: fd.get("f_wnote").trim(), url: /^https?:\/\//.test(url) ? url : "" }, placeData(fd));
       if (isNew) { const m = me(); Object.assign(data, { votes: m ? [m] : [], done: false, by: m, createdAt: Date.now() }); return write(() => S.store.add(S.key, "wishes", data)); }
       return write(() => S.store.update(S.key, "wishes", w.id, data));
     },
@@ -607,7 +620,7 @@ function buildPrompt(text) {
     "輸出格式（沒有的類別給空陣列）：",
     "{",
     '  "stops": [{"date":"YYYY-MM-DD","time":"HH:MM","title":"要做什麼","place":"地點名稱或地址","note":"備註","mode":"前往下一站的交通方式","mins":分鐘數或null,"moveNote":"交通備註"}],',
-    '  "wishes": [{"kind":"eat 或 buy","name":"店名或商品","place":"在哪裡","note":"備註"}],',
+    '  "wishes": [{"kind":"play/eat/buy/stay","name":"名稱","place":"在哪裡","note":"備註","url":"來源連結"}],',
     '  "tasks": [{"text":"待辦事項","cat":"預訂/證件/打包/其他","who":"負責人","note":"備註"}],',
     '  "expenses": [{"title":"項目","amount":數字,"payer":"誰付的","date":"YYYY-MM-DD","cat":"交通/住宿/餐飲/門票/購物/其他"}]',
     "}",
@@ -617,7 +630,7 @@ function buildPrompt(text) {
     "2. time 用 24 小時制 HH:MM；只寫「上午／下午／晚上」時估一個合理時間（09:00／14:00／19:00）；沒寫就給空字串。",
     "3. mode 只能是以下其中之一，或空字串：" + MODES.join("、") + "。",
     "4. place 寫可以在 Google 地圖搜尋到的名稱（景點、店名或地址），盡量保留當地原文名稱。",
-    "5. 「想吃、必吃、餐廳候選」放 wishes 的 eat；「想買、伴手禮」放 buy。已排進某天行程的餐廳放 stops。",
+    "5. 還沒排進某天的候選地點放 wishes：景點 play、餐廳 eat、伴手禮或購物 buy、住宿候選 stay。已排進某天的放 stops。",
     "6. 訂票、訂房、證件、要帶的東西放 tasks；who 只能是成員名單中的名字，否則給空字串。",
     "7. 只有原文明確寫出金額和付款人的花費才放 expenses，否則給空陣列。不要自己編造花費。",
     "8. 不要捏造原文沒有的地點或行程；可以把原文的補充說明放進 note。",
@@ -648,7 +661,8 @@ function normImport(d) {
     mins: Number(x.mins) > 0 ? Math.round(Number(x.mins)) : null, moveNote: str(x.moveNote).slice(0, 100)
   })).filter(x => x.title);
   const wishes = arr(d.wishes).map(x => ({
-    kind: str(x.kind) === "buy" ? "buy" : "eat", name: str(x.name).slice(0, 80), place: str(x.place).slice(0, 200), note: str(x.note).slice(0, 600)
+    kind: kindOf(str(x.kind))[0], name: str(x.name).slice(0, 80), place: str(x.place).slice(0, 200), note: str(x.note).slice(0, 600),
+    url: /^https?:\/\//.test(str(x.url)) ? str(x.url).slice(0, 500) : ""
   })).filter(x => x.name);
   const tasks = arr(d.tasks).map(x => ({
     text: str(x.text).slice(0, 100), cat: TASKCATS.includes(str(x.cat)) ? str(x.cat) : "其他",
@@ -666,7 +680,7 @@ function importSheet() {
   const ai = aiEnabled();
   openSheet("匯入計畫",
     '<p style="margin:0;font-size:14px;color:var(--muted)">' +
-    (ai ? "把行程、想去的店、待辦事項直接貼上（任何格式都可以），AI 會幫你拆成每日行程、必吃必買和行前清單，確認後才會加入。" : "示範模式沒有 AI，只能貼上 JSON。") +
+    (ai ? "把行程、想去的店、待辦事項直接貼上（任何格式都可以），AI 會幫你拆成每日行程、候選清單和行前清單，確認後才會加入。" : "示範模式沒有 AI，只能貼上 JSON。") +
     "<br>Claude 整理好的 JSON 也貼在這裡。</p>" +
     field("f_plan", "計畫內容", '<textarea id="f_plan" name="f_plan" rows="10" maxlength="20000" required placeholder="例如：&#10;Day1 10:30 到關西機場，搭 Haruka 到京都&#10;下午清水寺、二年坂&#10;晚上祇園吃飯（已訂 18:30）&#10;Day2 早上伏見稻荷…&#10;想吃：湯豆腐、抹茶聖代&#10;要訂：飯店、Haruka 車票" style="min-height:200px"></textarea>') +
     '<div id="importStatus" class="hint" style="font-size:13px;color:var(--muted)"></div>',
@@ -700,10 +714,10 @@ function importSheet() {
 function previewSheet(data) {
   const sec = (title, items, fmt) => items.length ? '<div class="field"><label>' + title + "（" + items.length + "）</label>" +
     '<ul class="rows card" style="max-height:220px;overflow:auto">' + items.map(x => '<li class="row" style="padding:8px 12px"><div class="main"><div class="sub" style="color:var(--ink)">' + fmt(x) + "</div></div></li>").join("") + "</ul></div>" : "";
-  const counts = [["stops", "行程"], ["wishes", "必吃必買"], ["tasks", "清單"], ["expenses", "支出"]].filter(([k]) => data[k].length);
+  const counts = [["stops", "行程"], ["wishes", "候選"], ["tasks", "清單"], ["expenses", "支出"]].filter(([k]) => data[k].length);
   openSheet("確認匯入內容",
     sec("每日行程", data.stops, x => "<b>" + (x.date ? md(x.date) : "未定日期") + " " + esc(x.time) + "</b> " + esc(x.title) + (x.place && x.place !== x.title ? ' <span style="color:var(--muted)">· ' + esc(x.place) + "</span>" : "") + (x.mode ? ' <span style="color:var(--muted)">→ ' + esc(x.mode) + "</span>" : "")) +
-    sec("必吃必買", data.wishes, x => (x.kind === "buy" ? "【買】" : "【吃】") + esc(x.name) + (x.place ? ' <span style="color:var(--muted)">· ' + esc(x.place) + "</span>" : "")) +
+    sec("候選清單", data.wishes, x => "【" + kindOf(x.kind)[1] + "】" + esc(x.name) + (x.place ? ' <span style="color:var(--muted)">· ' + esc(x.place) + "</span>" : "")) +
     sec("行前清單", data.tasks, x => "【" + esc(x.cat) + "】" + esc(x.text) + (x.who ? ' <span style="color:var(--muted)">· ' + esc(x.who) + "</span>" : "")) +
     sec("支出", data.expenses, x => esc(x.title) + " " + fmtMoney(x.amount, S.trip.currency) + ' <span style="color:var(--muted)">· ' + esc(x.payer) + " 付</span>") +
     field("f_imode", "加入方式", '<select id="f_imode" name="f_imode"><option value="add">加到現有內容後面</option><option value="replace">取代現有內容（會先刪除：' + counts.map(c => c[1]).join("、") + "）</option></select>") +
@@ -830,6 +844,13 @@ document.addEventListener("click", async ev => {
     case "stop-new": stopForm(null); break;
     case "stop-edit": { const x = find(S.stops); if (x) stopForm(x); break; }
     case "wishkind": S.wishKind = id; render(); break;
+    case "wish-plan": {
+      const w = find(S.wishes); if (!w) return;
+      const days = tripDays(S.trip).filter(Boolean);
+      stopForm({ date: days.includes(S.day) ? S.day : (days[0] || ""), time: "", title: w.name, place: w.place || w.name, note: w.note || "",
+        lat: w.lat, lng: w.lng, placeId: w.placeId || "", fromWish: w.id });
+      break;
+    }
     case "wish-new": wishForm(null); break;
     case "wish-edit": { const x = find(S.wishes); if (x) wishForm(x); break; }
     case "vote": {

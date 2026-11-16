@@ -243,3 +243,4 @@ body{background-image:var(--pattern,none);background-size:150px 150px}
 .theme-swatches label:has(input:checked){border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
 .theme-swatches label:focus-within{outline:2px solid var(--accent);outline-offset:2px}
 .theme-swatches .sw{display:flex;gap:3px}.theme-swatches .sw i{width:16px;height:16px;border-radius:50%;border:1px solid rgba(0,0,0,.12);display:block}
+.section-head{flex-wrap:wrap}.seg button .num{opacity:.7;font-size:12px}
