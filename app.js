@@ -1,6 +1,7 @@
 import { createStore, COLS } from "./store.js";
 import { TripMap, mapsEnabled, newSession, suggest, resolvePlace } from "./map.js";
 import { DEMO } from "./demo.js";
+import { aiEnabled, generateJSON, aiErrorMessage } from "./ai.js";
 
 const TABS = [["plan", "行程"], ["food", "必吃必買"], ["money", "分帳"], ["prep", "行前清單"]];
 const MODES = ["步行", "地鐵／電車", "公車", "計程車", "開車", "高鐵／火車", "飛機", "船", "其他"];
@@ -212,7 +213,7 @@ function topbar() {
   const j = joined();
   return '<div class="topbar"><label for="tripsel" class="sr">切換旅行</label><select id="tripsel" data-change="trip">' +
     j.map(x => '<option value="' + esc(x.code) + '"' + (x.key === S.key ? " selected" : "") + ">" + esc(x.name || x.code) + "</option>").join("") +
-    '<option value="__home">＋ 建立或加入其他旅行</option></select><button class="btn" data-act="share">分享</button></div>';
+    '<option value="__home">＋ 建立或加入其他旅行</option></select><button class="btn" data-act="import">匯入計畫</button><button class="btn" data-act="share">分享</button></div>';
 }
 function stub(t) {
   const s = parseD(t.start), e = parseD(t.end || t.start), now = parseD(todayISO());
@@ -564,6 +565,183 @@ function taskForm(x) {
     isNew ? null : () => write(() => S.store.del(S.key, "tasks", x.id)));
 }
 
+/* ---------- 匯入計畫（AI 整理或 JSON） ---------- */
+function buildPrompt(text) {
+  const t = S.trip;
+  return [
+    "你是旅行行程整理助手。把使用者貼上的旅行計畫整理成 JSON，只輸出 JSON，不要任何說明文字。",
+    "",
+    "這趟旅行的資訊：",
+    "- 目的地：" + (t.destination || ""),
+    "- 日期：" + (t.start || "未定") + " 到 " + (t.end || t.start || "未定"),
+    "- 成員：" + (t.members || []).join("、"),
+    "- 記帳幣別：" + (t.currency || "TWD"),
+    "",
+    "輸出格式（沒有的類別給空陣列）：",
+    "{",
+    '  "stops": [{"date":"YYYY-MM-DD","time":"HH:MM","title":"要做什麼","place":"地點名稱或地址","note":"備註","mode":"前往下一站的交通方式","mins":分鐘數或null,"moveNote":"交通備註"}],',
+    '  "wishes": [{"kind":"eat 或 buy","name":"店名或商品","place":"在哪裡","note":"備註"}],',
+    '  "tasks": [{"text":"待辦事項","cat":"預訂/證件/打包/其他","who":"負責人","note":"備註"}],',
+    '  "expenses": [{"title":"項目","amount":數字,"payer":"誰付的","date":"YYYY-MM-DD","cat":"交通/住宿/餐飲/門票/購物/其他"}]',
+    "}",
+    "",
+    "規則：",
+    "1. 「第一天／Day 1」對應出發日 " + (t.start || "") + "，依序往後推；原文有具體日期就用原文日期。真的無法判斷日期就給空字串。",
+    "2. time 用 24 小時制 HH:MM；只寫「上午／下午／晚上」時估一個合理時間（09:00／14:00／19:00）；沒寫就給空字串。",
+    "3. mode 只能是以下其中之一，或空字串：" + MODES.join("、") + "。",
+    "4. place 寫可以在 Google 地圖搜尋到的名稱（景點、店名或地址），盡量保留當地原文名稱。",
+    "5. 「想吃、必吃、餐廳候選」放 wishes 的 eat；「想買、伴手禮」放 buy。已排進某天行程的餐廳放 stops。",
+    "6. 訂票、訂房、證件、要帶的東西放 tasks；who 只能是成員名單中的名字，否則給空字串。",
+    "7. 只有原文明確寫出金額和付款人的花費才放 expenses，否則給空陣列。不要自己編造花費。",
+    "8. 不要捏造原文沒有的地點或行程；可以把原文的補充說明放進 note。",
+    "",
+    "使用者的計畫：",
+    "<<<",
+    text,
+    ">>>"
+  ].join("\n");
+}
+
+function parseImport(raw) {
+  let s = String(raw || "").trim();
+  s = s.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
+  const a = s.indexOf("{"), b = s.lastIndexOf("}");
+  if (a < 0 || b < a) throw new Error("JSON 格式不正確");
+  return JSON.parse(s.slice(a, b + 1));
+}
+function normImport(d) {
+  const t = S.trip; const ms = t.members || [];
+  const str = v => (v == null ? "" : String(v)).trim();
+  const date = v => /^\d{4}-\d{2}-\d{2}$/.test(str(v)) ? str(v) : "";
+  const time = v => { const m = /^(\d{1,2}):(\d{2})/.exec(str(v)); return m ? m[1].padStart(2, "0") + ":" + m[2] : ""; };
+  const arr = v => Array.isArray(v) ? v : [];
+  const stops = arr(d.stops).map(x => ({
+    date: date(x.date), time: time(x.time), title: str(x.title || x.place).slice(0, 80), place: str(x.place).slice(0, 200),
+    note: str(x.note).slice(0, 1000), mode: MODES.includes(str(x.mode)) ? str(x.mode) : "",
+    mins: Number(x.mins) > 0 ? Math.round(Number(x.mins)) : null, moveNote: str(x.moveNote).slice(0, 100)
+  })).filter(x => x.title);
+  const wishes = arr(d.wishes).map(x => ({
+    kind: str(x.kind) === "buy" ? "buy" : "eat", name: str(x.name).slice(0, 80), place: str(x.place).slice(0, 200), note: str(x.note).slice(0, 600)
+  })).filter(x => x.name);
+  const tasks = arr(d.tasks).map(x => ({
+    text: str(x.text).slice(0, 100), cat: TASKCATS.includes(str(x.cat)) ? str(x.cat) : "其他",
+    who: ms.includes(str(x.who)) ? str(x.who) : "", note: str(x.note).slice(0, 200)
+  })).filter(x => x.text);
+  const expenses = arr(d.expenses).map(x => ({
+    title: str(x.title).slice(0, 80), amount: Number(x.amount), date: date(x.date),
+    payer: ms.includes(str(x.payer)) ? str(x.payer) : "", cat: EXPCATS.includes(str(x.cat)) ? str(x.cat) : "",
+    among: Array.isArray(x.among) && x.among.filter(m => ms.includes(m)).length ? x.among.filter(m => ms.includes(m)) : ms.slice()
+  })).filter(x => x.title && x.amount > 0 && x.payer);
+  return { stops, wishes, tasks, expenses };
+}
+
+function importSheet() {
+  const ai = aiEnabled();
+  openSheet("匯入計畫",
+    '<p style="margin:0;font-size:14px;color:var(--muted)">' +
+    (ai ? "把行程、想去的店、待辦事項直接貼上（任何格式都可以），AI 會幫你拆成每日行程、必吃必買和行前清單，確認後才會加入。" : "示範模式沒有 AI，只能貼上 JSON。") +
+    "<br>Claude 整理好的 JSON 也貼在這裡。</p>" +
+    field("f_plan", "計畫內容", '<textarea id="f_plan" name="f_plan" rows="10" maxlength="20000" required placeholder="例如：&#10;Day1 10:30 到關西機場，搭 Haruka 到京都&#10;下午清水寺、二年坂&#10;晚上祇園吃飯（已訂 18:30）&#10;Day2 早上伏見稻荷…&#10;想吃：湯豆腐、抹茶聖代&#10;要訂：飯店、Haruka 車票" style="min-height:200px"></textarea>') +
+    '<div id="importStatus" class="hint" style="font-size:13px;color:var(--muted)"></div>',
+    async fd => {
+      const text = String(fd.get("f_plan") || "").trim();
+      if (!text) { toast("請先貼上計畫內容。"); return false; }
+      const status = $("#importStatus");
+      let data;
+      try {
+        if (/^\s*(```(json)?\s*)?\{/.test(text)) {
+          data = normImport(parseImport(text));
+        } else {
+          if (!ai) { toast("示範模式沒有 AI，請貼上 JSON。"); return false; }
+          status.textContent = "AI 整理中，大約 5～20 秒…";
+          const raw = await generateJSON(buildPrompt(text));
+          data = normImport(parseImport(raw));
+        }
+      } catch (e) {
+        console.error(e);
+        status.textContent = "";
+        toast(/^\s*\{/.test(text) ? "JSON 格式不正確，請確認是完整的內容。" : aiErrorMessage(e));
+        return false;
+      }
+      const n = data.stops.length + data.wishes.length + data.tasks.length + data.expenses.length;
+      if (!n) { status.textContent = ""; toast("沒有整理出任何項目，請確認內容後再試。"); return false; }
+      setTimeout(() => previewSheet(data), 60);
+      return true;
+    }, null, { saveLabel: ai ? "整理" : "讀取" });
+}
+
+function previewSheet(data) {
+  const sec = (title, items, fmt) => items.length ? '<div class="field"><label>' + title + "（" + items.length + "）</label>" +
+    '<ul class="rows card" style="max-height:220px;overflow:auto">' + items.map(x => '<li class="row" style="padding:8px 12px"><div class="main"><div class="sub" style="color:var(--ink)">' + fmt(x) + "</div></div></li>").join("") + "</ul></div>" : "";
+  const counts = [["stops", "行程"], ["wishes", "必吃必買"], ["tasks", "清單"], ["expenses", "支出"]].filter(([k]) => data[k].length);
+  openSheet("確認匯入內容",
+    sec("每日行程", data.stops, x => "<b>" + (x.date ? md(x.date) : "未定日期") + " " + esc(x.time) + "</b> " + esc(x.title) + (x.place && x.place !== x.title ? ' <span style="color:var(--muted)">· ' + esc(x.place) + "</span>" : "") + (x.mode ? ' <span style="color:var(--muted)">→ ' + esc(x.mode) + "</span>" : "")) +
+    sec("必吃必買", data.wishes, x => (x.kind === "buy" ? "【買】" : "【吃】") + esc(x.name) + (x.place ? ' <span style="color:var(--muted)">· ' + esc(x.place) + "</span>" : "")) +
+    sec("行前清單", data.tasks, x => "【" + esc(x.cat) + "】" + esc(x.text) + (x.who ? ' <span style="color:var(--muted)">· ' + esc(x.who) + "</span>" : "")) +
+    sec("支出", data.expenses, x => esc(x.title) + " " + fmtMoney(x.amount, S.trip.currency) + ' <span style="color:var(--muted)">· ' + esc(x.payer) + " 付</span>") +
+    field("f_imode", "加入方式", '<select id="f_imode" name="f_imode"><option value="add">加到現有內容後面</option><option value="replace">取代現有內容（會先刪除：' + counts.map(c => c[1]).join("、") + "）</option></select>") +
+    (mapsEnabled() ? '<div class="checks"><label><input type="checkbox" id="f_geo" name="f_geo" value="1" checked>自動在地圖上定位地點</label></div>' : "") +
+    '<div id="importStatus" class="hint" style="font-size:13px;color:var(--muted)"></div>',
+    async fd => {
+      const replace = fd.get("f_imode") === "replace";
+      const geo = !!fd.get("f_geo");
+      const status = $("#importStatus");
+      const ok = await runImport(data, replace, geo, msg => { if (status) status.textContent = msg; });
+      if (ok) { toast("已匯入 " + counts.map(([k, l]) => l + " " + data[k].length).join("、")); if (data.stops.length) { const d = data.stops.find(x => x.date); if (d) S.day = d.date; S.tab = "plan"; history.replaceState(null, "", "#plan"); } }
+      return ok;
+    }, null, { saveLabel: "確認匯入", noFocus: true });
+}
+
+async function geocode(text, dest, token) {
+  const q = dest && !text.includes(dest) ? text + " " + dest : text;
+  const center = (() => { const p = [...S.stops, ...S.wishes].filter(hasPos); if (!p.length) return null; return { lat: p.reduce((a, b) => a + b.lat, 0) / p.length, lng: p.reduce((a, b) => a + b.lng, 0) / p.length }; })();
+  const list = await suggest(q, token, center);
+  if (!list.length) return null;
+  const p = await resolvePlace(list[0].pred);
+  return { lat: p.lat, lng: p.lng, placeId: p.placeId, place: p.name + (p.address ? "（" + p.address + "）" : "") };
+}
+
+async function runImport(data, replace, geo, progress) {
+  const key = S.key, me0 = me(), now = Date.now(), dest = S.trip.destination || "";
+  try {
+    if (replace) {
+      const map = { stops: S.stops, wishes: S.wishes, tasks: S.tasks, expenses: S.expenses };
+      for (const k of Object.keys(map)) {
+        if (!data[k].length) continue;
+        progress("刪除舊的" + k + "…");
+        for (const x of map[k].slice()) await S.store.del(key, k, x.id);
+      }
+    }
+    const cache = new Map();
+    const locate = async x => {
+      const text = x.place || x.title || x.name;
+      if (!geo || !text) return {};
+      if (cache.has(text)) return cache.get(text);
+      let r = {};
+      try { const g = await geocode(text, dest, await newSession()); if (g) r = { lat: g.lat, lng: g.lng, placeId: g.placeId, place: x.place ? x.place : g.place }; } catch (e) { console.warn("geocode", text, e); }
+      cache.set(text, r); return r;
+    };
+    let i = 0; const total = data.stops.length + data.wishes.length + data.tasks.length + data.expenses.length;
+    for (const x of data.stops) {
+      progress("加入中 " + (++i) + "/" + total + "：" + x.title);
+      const pos = await locate(x);
+      await S.store.add(key, "stops", Object.assign({ lat: null, lng: null, placeId: "" }, x, pos, { createdAt: now + i, by: me0 }));
+    }
+    for (const x of data.wishes) {
+      progress("加入中 " + (++i) + "/" + total + "：" + x.name);
+      const pos = await locate(x);
+      await S.store.add(key, "wishes", Object.assign({ lat: null, lng: null, placeId: "" }, x, pos, { votes: me0 ? [me0] : [], done: false, by: me0, createdAt: now + i }));
+    }
+    for (const x of data.tasks) { progress("加入中 " + (++i) + "/" + total); await S.store.add(key, "tasks", Object.assign({}, x, { done: false, createdAt: now + i })); }
+    for (const x of data.expenses) { progress("加入中 " + (++i) + "/" + total); await S.store.add(key, "expenses", Object.assign({}, x, { createdAt: now + i })); }
+    return true;
+  } catch (e) {
+    console.error(e); progress("");
+    toast("匯入中途失敗，已加入的項目會保留。請檢查後再試。");
+    return false;
+  }
+}
+
 /* ---------- events ---------- */
 const busy = new Set();
 async function once(key, fn) { if (busy.has(key)) return; busy.add(key); try { await fn(); } finally { busy.delete(key); } }
@@ -583,6 +761,7 @@ document.addEventListener("click", async ev => {
     case "trip-new": tripForm(null); break;
     case "trip-edit": tripForm(S.trip); break;
     case "share": shareSheet(S.trip.code, ""); break;
+    case "import": importSheet(); break;
     case "copy": { const u = $("#s_url"); try { await navigator.clipboard.writeText(u.value); toast("已複製網址"); } catch (e) { u.select(); toast("請長按選取後複製"); } break; }
     case "native-share": try { await navigator.share({ title: (S.trip && S.trip.name) || "旅行共編手帳", url: $("#s_url").value }); } catch (e) {} break;
     case "day": S.day = id; render(); break;

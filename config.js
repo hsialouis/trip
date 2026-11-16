@@ -15,5 +15,8 @@ export const CONFIG = {
   },
 
   // Google 地圖 API 金鑰（需啟用 Maps JavaScript API 與 Places API (New)）
-  mapsKey: "AIzaSyB1v7o9jcZo4U5_ngxE6cx_TPHnqwszF_0"
+  mapsKey: "AIzaSyB1v7o9jcZo4U5_ngxE6cx_TPHnqwszF_0",
+
+  // reCAPTCHA v3 網站金鑰（Firebase App Check 用，保護 AI 匯入的 Gemini 額度不被盜用）
+  recaptchaSiteKey: ""
 };
