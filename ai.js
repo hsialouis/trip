@@ -1,5 +1,5 @@
 // AI 匯入：透過 Firebase AI Logic 呼叫 Gemini（免費方案），把文字計畫整理成結構化資料
-import { CONFIG } from "./config.js";
+import { CONFIG } from "./config.js?v=202611161555";
 
 const FB = "https://www.gstatic.com/firebasejs/12.19.0/";
 const MODELS = CONFIG.aiModels || ["gemini-3.1-flash-lite", "gemini-2.5-flash-lite", "gemini-2.5-flash"];

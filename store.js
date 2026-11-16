@@ -1,5 +1,5 @@
 // 資料層：有 Firebase 設定就用 Firestore（多人即時同步），否則用本機示範模式。
-import { CONFIG } from "./config.js";
+import { CONFIG } from "./config.js?v=202611161555";
 
 const FB = "https://www.gstatic.com/firebasejs/12.19.0/";
 export const COLS = ["stops", "wishes", "expenses", "tasks"];

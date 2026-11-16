@@ -1,7 +1,7 @@
-import { createStore, COLS } from "./store.js";
-import { TripMap, mapsEnabled, newSession, suggest, resolvePlace } from "./map.js";
-import { DEMO } from "./demo.js";
-import { aiEnabled, generateJSON, aiErrorMessage } from "./ai.js";
+import { createStore, COLS } from "./store.js?v=202611161555";
+import { TripMap, mapsEnabled, newSession, suggest, resolvePlace } from "./map.js?v=202611161555";
+import { DEMO } from "./demo.js?v=202611161555";
+import { aiEnabled, generateJSON, aiErrorMessage } from "./ai.js?v=202611161555";
 
 const TABS = [["plan", "行程"], ["food", "必吃必買"], ["money", "分帳"], ["prep", "行前清單"]];
 const MODES = ["步行", "地鐵／電車", "公車", "計程車", "開車", "高鐵／火車", "飛機", "船", "其他"];
