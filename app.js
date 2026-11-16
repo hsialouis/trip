@@ -368,7 +368,9 @@ function updateMap() {
     });
     tmap.ready.catch(e => { console.error(e); S.mapErr = "地圖載入失敗，請確認 Google 地圖金鑰設定。"; updateMap(); });
   }
-  tmap.show(pts, S.tab === "plan").catch(() => {});
+  let route = false;
+  if (S.tab === "plan") { const modes = dayStops().map(x => x.mode).filter(Boolean); route = modes.length && modes.every(m => m === "步行") ? "WALKING" : "DRIVING"; }
+  tmap.show(pts, route).catch(() => {});
   const missing = total - pts.length;
   $("#mapinfo").innerHTML = esc(pts.length ? "地圖上 " + pts.length + " 個地點" : "這裡還沒有已定位的地點") + (missing > 0 ? "，" + missing + ' 個未定位 <button class="linkbtn" data-act="geo-missing">自動定位</button>' : "");
 }
@@ -798,7 +800,7 @@ document.addEventListener("click", async ev => {
       if (!navigator.geolocation) { toast("這個瀏覽器不支援定位。"); return; }
       navigator.geolocation.getCurrentPosition(p => tmap && tmap.showMe({ lat: p.coords.latitude, lng: p.coords.longitude }), () => toast("無法取得位置，請允許瀏覽器使用定位。"), { enableHighAccuracy: true, timeout: 10000 });
       break;
-    case "fit": tmap && tmap.show(mapPoints(), S.tab === "plan", true); break;
+    case "fit": tmap && tmap.show(mapPoints(), S.tab === "plan" ? "DRIVING" : false, true); break;
     case "geo-missing": el.disabled = true; once("geo", geoMissing); break;
     case "stop-new": stopForm(null); break;
     case "stop-edit": { const x = find(S.stops); if (x) stopForm(x); break; }

@@ -70,16 +70,48 @@ export class TripMap {
     const refit = force || sig !== this.sig;
     this.sig = sig;
     this.pins.forEach(p => p.setMap(null)); this.pins.clear();
-    if (this.line) { this.line.setMap(null); this.line = null; }
+    (this.lines || []).forEach(l => l.setMap(null)); this.lines = [];
+    this.routeSeq = (this.routeSeq || 0) + 1;
     points.forEach(pt => { const p = new this.Pin(pt, this.onPinClick); p.setMap(this.map); this.pins.set(pt.id, p); });
     if (route && points.length > 1) {
-      this.line = new this.Polyline({
-        path: points.map(p => ({ lat: p.lat, lng: p.lng })), map: this.map,
-        strokeOpacity: 0,
-        icons: [{ icon: { path: "M 0,-1 0,1", strokeOpacity: .9, strokeColor: getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#d4442a", scale: 3 }, offset: "0", repeat: "14px" }]
+      const my = ++this.routeSeq;
+      this.drawRoute(points, route).then(lines => {
+        if (my !== this.routeSeq) { lines.forEach(l => l.setMap(null)); return; }
+        this.lines = lines;
       });
     }
     if (refit) this.fit(points);
+  }
+  // 先用 Google 路線（Routes）畫實際道路；失敗時退回虛線直線
+  async drawRoute(points, mode) {
+    const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#d4442a";
+    const pts = points.slice(0, 27).map(p => ({ lat: p.lat, lng: p.lng }));
+    const travelMode = mode === "WALKING" ? "WALKING" : "DRIVING";
+    const key = "tripbook:route:" + travelMode + ":" + pts.map(p => p.lat.toFixed(5) + "," + p.lng.toFixed(5)).join("|");
+    try {
+      let path = null;
+      try { const c = JSON.parse(localStorage.getItem(key) || "null"); if (c && c.t > Date.now() - 7 * 864e5) path = c.p; } catch (e) {}
+      if (!path) {
+        const { Route } = await this.gm.importLibrary("routes");
+        const { routes } = await Route.computeRoutes({
+          origin: pts[0], destination: pts[pts.length - 1], intermediates: pts.slice(1, -1),
+          travelMode, fields: ["path"]
+        });
+        if (!routes || !routes[0] || !routes[0].path) throw new Error("no route");
+        path = routes[0].path.map(p => [Math.round(p.lat * 1e5) / 1e5, Math.round(p.lng * 1e5) / 1e5]);
+        try { localStorage.setItem(key, JSON.stringify({ t: Date.now(), p: path })); } catch (e) {}
+      }
+      return [new this.Polyline({
+        path: path.map(([lat, lng]) => ({ lat, lng })), map: this.map,
+        strokeColor: accent, strokeOpacity: .85, strokeWeight: 5
+      })];
+    } catch (e) {
+      console.warn("route fallback", e);
+      return [new this.Polyline({
+        path: pts, map: this.map, strokeOpacity: 0,
+        icons: [{ icon: { path: "M 0,-1 0,1", strokeOpacity: .9, strokeColor: accent, scale: 3 }, offset: "0", repeat: "14px" }]
+      })];
+    }
   }
   fit(points) {
     if (!this.map) return;
