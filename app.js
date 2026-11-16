@@ -1,7 +1,7 @@
-import { createStore, COLS } from "./store.js?v=202611161555";
-import { TripMap, mapsEnabled, newSession, suggest, resolvePlace } from "./map.js?v=202611161555";
-import { DEMO } from "./demo.js?v=202611161555";
-import { aiEnabled, generateJSON, aiErrorMessage } from "./ai.js?v=202611161555";
+import { createStore, COLS } from "./store.js?v=202611161620";
+import { TripMap, mapsEnabled, newSession, suggest, resolvePlace } from "./map.js?v=202611161620";
+import { DEMO } from "./demo.js?v=202611161620";
+import { aiEnabled, generateJSON, aiErrorMessage } from "./ai.js?v=202611161620";
 
 const TABS = [["plan", "行程"], ["food", "必吃必買"], ["money", "分帳"], ["prep", "行前清單"]];
 const MODES = ["步行", "地鐵／電車", "公車", "計程車", "開車", "高鐵／火車", "飛機", "船", "其他"];
@@ -9,6 +9,27 @@ const TASKCATS = ["預訂", "證件", "打包", "其他"];
 const EXPCATS = ["交通", "住宿", "餐飲", "門票", "購物", "其他"];
 const ZERO = ["JPY", "KRW", "TWD", "VND", "IDR", "HUF", "CLP", "ISK"];
 const WD = "日一二三四五六";
+const THEMES = [
+  ["", "車票（預設）", ["#edf1f4", "#132030", "#d4442a"]],
+  ["onsen", "溫泉", ["#f4eee7", "#2b1d14", "#b5651d"]],
+  ["sea", "海島", ["#e8f2f5", "#0f2a36", "#0e86a8"]],
+  ["forest", "森林", ["#ecf1ea", "#16261a", "#2f7d4a"]],
+  ["sakura", "櫻花", ["#fbf0f3", "#3a1e28", "#d14d7a"]],
+  ["maple", "楓紅", ["#f6eee8", "#2d1810", "#c8501a"]],
+  ["snow", "雪國", ["#eef3f9", "#18243a", "#3d6fd6"]],
+  ["night", "夜景", ["#12122a", "#ecebff", "#ff5fa2"]]
+];
+let curTheme = null;
+function applyTheme(name) {
+  name = THEMES.some(t => t[0] === name) ? name : "";
+  if (name === curTheme) return;
+  curTheme = name;
+  if (name) document.documentElement.setAttribute("data-trip-theme", name);
+  else document.documentElement.removeAttribute("data-trip-theme");
+  const m = document.querySelector('meta[name="theme-color"]');
+  if (m) m.setAttribute("content", getComputedStyle(document.documentElement).getPropertyValue("--paper").trim() || "#edf1f4");
+  if (tmap) tmap.sig = "";
+}
 
 const S = {
   store: null, fatal: "", trip: null, key: null, stops: [], wishes: [], expenses: [], tasks: [],
@@ -178,6 +199,7 @@ function settle(t) {
 /* ---------- render ---------- */
 function render() {
   const top = $("#top"), view = $("#view"), mapcard = $("#mapcard");
+  applyTheme(S.screen === "trip" && S.trip ? (S.trip.theme || "") : "");
   let banner = "";
   if (S.store && S.store.mode === "local") banner = '<div class="banner">示範模式：資料只存在這台裝置，別人看不到。完成 README 的設定後就能多人共用。</div>';
   if (S.screen === "fatal") { top.innerHTML = '<div class="card empty" style="margin-top:40px"><p><b>無法開啟</b></p><p>' + esc(S.fatal) + "</p></div>"; view.innerHTML = ""; mapcard.hidden = true; return; }
@@ -453,6 +475,8 @@ function tripForm(t) {
     '<div class="two">' + field("f_cur", "記帳幣別", inp("f_cur", t.currency || "TWD", 'maxlength="3" placeholder="JPY" style="text-transform:uppercase"'), "三碼代號，例如 JPY、KRW") +
     field("f_home", "換算成", inp("f_home", t.home || "TWD", 'maxlength="3" placeholder="TWD" style="text-transform:uppercase"')) + "</div>" +
     field("f_rate", "匯率（1 記帳幣 = ? 換算幣）", inp("f_rate", t.rate || "", 'type="number" step="any" min="0" placeholder="例如 0.21，可留空"'), "留空就不顯示換算金額。") +
+    '<div class="field"><label>主題</label><div class="theme-swatches" role="radiogroup" aria-label="主題">' + THEMES.map(([k, l, c], i) =>
+      '<label><input type="radio" id="f_theme' + i + '" name="f_theme" value="' + k + '"' + ((t.theme || "") === k ? " checked" : "") + '><span class="sw">' + c.map(x => '<i style="background:' + x + '"></i>').join("") + "</span>" + l + "</label>").join("") + "</div></div>" +
     (isNew ? field("f_pw", "旅行密碼", inp("f_pw", "", 'required minlength="4" maxlength="40" autocomplete="new-password"'), "至少 4 個字。同行的人要用這組密碼加入，建立後無法更改，請記下來。") : ""),
     async fd => {
       const start = fd.get("f_start"), end = fd.get("f_end") || start;
@@ -460,7 +484,8 @@ function tripForm(t) {
       const members = splitNames(fd.get("f_members")); if (!members.length) { toast("請至少填一位成員。"); return false; }
       const data = {
         destination: fd.get("f_dest").trim(), name: fd.get("f_name").trim(), start, end, members,
-        currency: (fd.get("f_cur") || "TWD").trim().toUpperCase(), home: (fd.get("f_home") || "").trim().toUpperCase(), rate: Number(fd.get("f_rate")) || 0
+        currency: (fd.get("f_cur") || "TWD").trim().toUpperCase(), home: (fd.get("f_home") || "").trim().toUpperCase(), rate: Number(fd.get("f_rate")) || 0,
+        theme: String(fd.get("f_theme") || "")
       };
       if (isNew) {
         const pw = fd.get("f_pw"); if (pw.length < 4) { toast("密碼至少 4 個字。"); return false; }
@@ -781,7 +806,7 @@ document.addEventListener("click", async ev => {
   const act = el.dataset.act, id = el.dataset.id;
   const find = arr => arr.find(x => x.id === id);
   switch (act) {
-    case "close": closeSheet(); break;
+    case "close": closeSheet(); render(); break;
     case "sheet-del":
       if (!sheetState) return;
       if (!sheetState.armed) { sheetState.armed = true; el.textContent = "再按一次確認刪除"; return; }
@@ -828,6 +853,9 @@ document.addEventListener("change", ev => {
     const j = joined().find(x => x.code === el.value); if (j) { render.scrolled = false; openTrip(j.code, j.key); }
   }
   if (k === "me" && S.trip) { lsSet("me:" + S.trip.code, el.value); render(); }
+});
+document.addEventListener("change", ev => {
+  if (ev.target.name === "f_theme") applyTheme(ev.target.value);
 });
 document.addEventListener("submit", async ev => {
   if (ev.target.id === "joinform") {

@@ -3,7 +3,7 @@ const all = ["Louis", "小安", "阿哲"];
 export const DEMO = {
   password: "1234",
   trip: {
-    code: "demo", demo: true, destination: "京都", name: "京都賞楓 3 日", start: "2026-12-03", end: "2026-12-05",
+    code: "demo", demo: true, theme: "maple", destination: "京都", name: "京都賞楓 3 日", start: "2026-12-03", end: "2026-12-05",
     members: all, currency: "JPY", home: "TWD", rate: 0.21, createdAt: 1
   },
   cols: {
